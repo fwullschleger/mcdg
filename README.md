@@ -1,4 +1,4 @@
-Markdown Class Diagram Generator (mcdg)
+Mermaid Class Diagram Generator (mcdg)
 ==================================================
 
 ## What is mcdg
