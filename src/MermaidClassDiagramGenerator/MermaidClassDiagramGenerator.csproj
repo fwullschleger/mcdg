@@ -2,13 +2,17 @@
 
   <PropertyGroup>
     <OutputType>Exe</OutputType>
-    <TargetFramework>net10.0</TargetFramework>
+    <TargetFramework>net8.0</TargetFramework>
     <ImplicitUsings>enable</ImplicitUsings>
     <Nullable>enable</Nullable>
+    
     <PackAsTool>true</PackAsTool>
     <ToolCommandName>mcdg</ToolCommandName>
     <PackageOutputPath>../../nupkg</PackageOutputPath>
-    <Version>1.0.0</Version>
+    
+    <Version>1.0.3</Version>
+    <PackageId>mcdg</PackageId>
+    <PackageLicenseExpression>MIT</PackageLicenseExpression>
     <PackageTags>mermaid;diagram;classdiagram;generator;C#;markdown</PackageTags>
     <Copyright>Copyright (c) 2025 fwullschleger</Copyright>
     <Authors>fwullschleger</Authors>
@@ -16,7 +20,13 @@
     <RepositoryUrl>https://github.com/fwullschleger/mcdg</RepositoryUrl>
     <PackageReadmeFile>README.md</PackageReadmeFile>
     <PackageDescription>Dotnet tool for generating a mermaid class-diagram from C# class files</PackageDescription>
+    
   </PropertyGroup>
+
+  <ItemGroup>
+    <!-- Packs the readme from the root of the repo -->
+    <None Include="../../README.md" Pack="true" PackagePath="\" />
+  </ItemGroup>
 
   <ItemGroup>
     <PackageReference Include="System.CommandLine" Version="2.0.0-beta4.22272.1" />
