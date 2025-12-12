@@ -15,7 +15,7 @@ The core graph generation logic and structure were originally written by [rtfs](
 ## Installing mcdg
 
 1. Install .Net SDK 6.0 or later.
-2. Install mcdg as a global dotnet tool (assuming the package is built).
+2. Install mcdg as a global dotnet tool.
 
     ```shell
     $ dotnet tool install --global mcdg
