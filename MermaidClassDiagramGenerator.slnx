@@ -1,0 +1,4 @@
+<Solution>
+  <Project Path="src/ClassGraph/ClassGraph.csproj" />
+  <Project Path="src/MermaidClassDiagramGenerator/MermaidClassDiagramGenerator.csproj" />
+</Solution>
