@@ -41,7 +41,23 @@ classDiagram
       allMethods += GenerateClassMethod(@class.Name, method) + "\r\n";
     }
 
+    // Add type annotation for non-class types
+    var typeAnnotation = GetTypeAnnotation(@class.Kind);
+    if (!string.IsNullOrEmpty(typeAnnotation)) {
+      allProperties = $"{@class.Name} : {typeAnnotation}\r\n" + allProperties;
+    }
+
     return string.Format(ClassFrame, @class.Name, allProperties, allMethods);
+  }
+
+  private string GetTypeAnnotation(TypeKind kind) {
+    return kind switch {
+      TypeKind.Interface => "<<interface>>",
+      TypeKind.Record => "<<record>>",
+      TypeKind.Struct => "<<struct>>",
+      TypeKind.RecordStruct => "<<record struct>>",
+      _ => string.Empty
+    };
   }
 
   private string GenerateClassProperty(string className, Property property) {

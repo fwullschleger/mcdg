@@ -6,67 +6,212 @@ namespace DiagramGenerator.ClassGraph;
 
 public class SourceGraphBuilder : IGraphBuilder
 {
+    private SemanticModel? _semanticModel;
+    private Dictionary<string, List<TypeDeclarationSyntax>> _partialTypes = new();
+    private HashSet<string> _systemNamespaces = new()
+    {
+        "System", "Microsoft", "System.Collections", "System.Collections.Generic",
+        "System.Linq", "System.Threading", "System.Threading.Tasks", "System.Text"
+    };
+
+    public bool ExcludeSystemTypes { get; set; } = false;
+    public Visibility MinimumVisibility { get; set; } = Visibility.Public;
+    public bool Verbose { get; set; } = false;
+    private int _filesProcessed = 0;
+    private int _classesFound = 0;
+    private List<string> _errors = new();
+
     public Graph Build(IEnumerable<string> files, IEnumerable<string> nsList, IEnumerable<string> typenameList, bool inheritanceOnly)
     {
         var graph = new Graph();
+        var fileList = files.ToList();
 
-        foreach (var file in files)
+        // Create compilation for semantic analysis
+        var syntaxTrees = new List<SyntaxTree>();
+        foreach (var file in fileList)
         {
-            if (!File.Exists(file)) continue;
-
-            var code = File.ReadAllText(file);
-            var tree = CSharpSyntaxTree.ParseText(code);
-            var root = tree.GetRoot();
-
-            // Find all classes, interfaces, records, structs
-            var typeDeclarations = root.DescendantNodes().OfType<TypeDeclarationSyntax>();
-
-            foreach (var typeDecl in typeDeclarations)
+            if (!File.Exists(file))
             {
-                // Filter by type name
-                if (typenameList.Any() && !typenameList.Contains(typeDecl.Identifier.Text))
-                    continue;
+                LogError($"File not found: {file}");
+                continue;
+            }
 
-                // Filter by Namespace
-                var ns = GetNamespace(typeDecl);
-                if (nsList.Any() && !nsList.Contains(ns))
-                    continue;
+            try
+            {
+                var code = File.ReadAllText(file);
+                var tree = CSharpSyntaxTree.ParseText(code, path: file);
+                syntaxTrees.Add(tree);
+            }
+            catch (Exception ex)
+            {
+                LogError($"Error reading file {file}: {ex.Message}");
+            }
+        }
 
-                var @class = BuildClassFromSyntax(typeDecl);
-                graph.AddClass(@class);
+        // Create compilation with basic references
+        var compilation = CSharpCompilation.Create("DiagramAnalysis")
+            .AddReferences(MetadataReference.CreateFromFile(typeof(object).Assembly.Location))
+            .AddSyntaxTrees(syntaxTrees);
+
+        // First pass: collect partial types
+        foreach (var tree in syntaxTrees)
+        {
+            try
+            {
+                _semanticModel = compilation.GetSemanticModel(tree);
+                var root = tree.GetRoot();
+
+                _filesProcessed++;
+                LogVerbose($"Processing file: {tree.FilePath}");
+
+                // Find all classes, interfaces, records, structs
+                var typeDeclarations = root.DescendantNodes().OfType<TypeDeclarationSyntax>();
+
+                foreach (var typeDecl in typeDeclarations)
+                {
+                    // Filter by type name
+                    if (typenameList.Any() && !typenameList.Contains(typeDecl.Identifier.Text))
+                        continue;
+
+                    // Filter by Namespace
+                    var ns = GetNamespace(typeDecl);
+                    if (nsList.Any() && !nsList.Contains(ns))
+                        continue;
+
+                    // Group partial types
+                    var fullName = GetFullTypeName(typeDecl);
+                    if (typeDecl.Modifiers.Any(m => m.IsKind(SyntaxKind.PartialKeyword)))
+                    {
+                        if (!_partialTypes.ContainsKey(fullName))
+                        {
+                            _partialTypes[fullName] = new List<TypeDeclarationSyntax>();
+                        }
+                        _partialTypes[fullName].Add(typeDecl);
+                    }
+                    else
+                    {
+                        var @class = BuildClassFromSyntax(typeDecl);
+                        graph.AddClass(@class);
+                        _classesFound++;
+                    }
+                }
+            }
+            catch (Exception ex)
+            {
+                LogError($"Error processing syntax tree {tree.FilePath}: {ex.Message}");
+            }
+        }
+
+        // Second pass: process partial types
+        foreach (var kvp in _partialTypes)
+        {
+            try
+            {
+                var mergedClass = MergePartialTypes(kvp.Value);
+                graph.AddClass(mergedClass);
+                _classesFound++;
+            }
+            catch (Exception ex)
+            {
+                LogError($"Error merging partial type {kvp.Key}: {ex.Message}");
             }
         }
 
         graph.RebuildRelation(inheritanceOnly);
+
+        // Print summary
+        if (Verbose)
+        {
+            Console.WriteLine($"Summary: Processed {_filesProcessed} files, found {_classesFound} types");
+            if (_errors.Any())
+            {
+                Console.WriteLine($"Errors encountered: {_errors.Count}");
+                foreach (var error in _errors)
+                {
+                    Console.WriteLine($"  - {error}");
+                }
+            }
+        }
+
         return graph;
+    }
+
+    private void LogVerbose(string message)
+    {
+        if (Verbose)
+        {
+            Console.WriteLine(message);
+        }
+    }
+
+    private void LogError(string message)
+    {
+        _errors.Add(message);
+        if (Verbose)
+        {
+            Console.Error.WriteLine($"ERROR: {message}");
+        }
+    }
+
+    private string GetFullTypeName(TypeDeclarationSyntax typeDecl)
+    {
+        var ns = GetNamespace(typeDecl);
+        return string.IsNullOrEmpty(ns) ? typeDecl.Identifier.Text : $"{ns}.{typeDecl.Identifier.Text}";
+    }
+
+    private Class MergePartialTypes(List<TypeDeclarationSyntax> partials)
+    {
+        var first = partials[0];
+        var @class = new Class(first.Identifier.Text)
+        {
+            IsInterface = first is InterfaceDeclarationSyntax,
+            Kind = DetermineTypeKind(first)
+        };
+
+        // Merge all partial declarations
+        foreach (var partial in partials)
+        {
+            // Handle Inheritance and Interfaces
+            if (partial.BaseList != null && @class.BaseType == null)
+            {
+                ProcessBaseList(partial, @class);
+            }
+
+            // Parse Properties
+            foreach (var prop in partial.Members.OfType<PropertyDeclarationSyntax>())
+            {
+                if (!IsVisible(prop.Modifiers)) continue;
+                var p = new Property(prop.Identifier.Text, GetVisibility(prop.Modifiers));
+                p.Type = prop.Type.ToString();
+                ExtractTypeDependencies(prop.Type, p);
+                @class.AddProperty(p);
+            }
+
+            // Parse Methods
+            foreach (var method in partial.Members.OfType<MethodDeclarationSyntax>())
+            {
+                if (!IsVisible(method.Modifiers)) continue;
+                var m = new Method(method.Identifier.Text, GetVisibility(method.Modifiers));
+                m.Type = method.ReturnType.ToString();
+                ExtractTypeDependencies(method.ReturnType, m);
+                @class.AddMethod(m);
+            }
+        }
+
+        return @class;
     }
 
     private Class BuildClassFromSyntax(TypeDeclarationSyntax typeDecl)
     {
         var c = new Class(typeDecl.Identifier.Text)
         {
-            IsInterface = typeDecl is InterfaceDeclarationSyntax
+            IsInterface = typeDecl is InterfaceDeclarationSyntax,
+            Kind = DetermineTypeKind(typeDecl)
         };
 
         // Handle Inheritance (Base Class) and Interfaces
-        if (typeDecl.BaseList != null)
-        {
-            foreach (var baseType in typeDecl.BaseList.Types)
-            {
-                var typeName = baseType.Type.ToString();
-                
-                // Simple heuristic: If it starts with 'I' and the second letter is uppercase, it's likely an interface.
-                // Otherwise, we assume it's the Base Class (if one hasn't been set yet).
-                if (c.BaseType == null && (!typeName.StartsWith("I") || (typeName.Length > 1 && char.IsLower(typeName[1]))))
-                {
-                    c.BaseType = typeName;
-                }
-                else
-                {
-                    c.ImplementedInterface.Add(typeName);
-                }
-            }
-        }
+        ProcessBaseList(typeDecl, c);
+
 
         // Parse Properties
         foreach (var prop in typeDecl.Members.OfType<PropertyDeclarationSyntax>())
@@ -100,9 +245,74 @@ public class SourceGraphBuilder : IGraphBuilder
         return c;
     }
 
+    private TypeKind DetermineTypeKind(TypeDeclarationSyntax typeDecl)
+    {
+        return typeDecl switch
+        {
+            InterfaceDeclarationSyntax => TypeKind.Interface,
+            StructDeclarationSyntax when typeDecl.Modifiers.Any(m => m.IsKind(SyntaxKind.RecordKeyword)) => TypeKind.RecordStruct,
+            StructDeclarationSyntax => TypeKind.Struct,
+            RecordDeclarationSyntax => TypeKind.Record,
+            ClassDeclarationSyntax when typeDecl.Modifiers.Any(m => m.IsKind(SyntaxKind.RecordKeyword)) => TypeKind.Record,
+            _ => TypeKind.Class
+        };
+    }
+
+    private void ProcessBaseList(TypeDeclarationSyntax typeDecl, Class c)
+    {
+        if (typeDecl.BaseList == null) return;
+
+        foreach (var baseType in typeDecl.BaseList.Types)
+        {
+            var typeName = baseType.Type.ToString();
+
+            // Use semantic model if available for accurate type detection
+            if (_semanticModel != null)
+            {
+                var symbolInfo = _semanticModel.GetSymbolInfo(baseType.Type);
+                if (symbolInfo.Symbol is INamedTypeSymbol namedType)
+                {
+                    if (namedType.TypeKind == Microsoft.CodeAnalysis.TypeKind.Interface)
+                    {
+                        if (!ShouldExcludeType(namedType.ContainingNamespace?.ToDisplayString()))
+                        {
+                            c.ImplementedInterface.Add(typeName);
+                        }
+                    }
+                    else if (c.BaseType == null)
+                    {
+                        if (!ShouldExcludeType(namedType.ContainingNamespace?.ToDisplayString()))
+                        {
+                            c.BaseType = typeName;
+                        }
+                    }
+                    return;
+                }
+            }
+
+            // Fallback to heuristic if semantic model is not available
+            if (c.BaseType == null && (!typeName.StartsWith("I") || (typeName.Length > 1 && char.IsLower(typeName[1]))))
+            {
+                c.BaseType = typeName;
+            }
+            else
+            {
+                c.ImplementedInterface.Add(typeName);
+            }
+        }
+    }
+
+    private bool ShouldExcludeType(string? typeNamespace)
+    {
+        if (!ExcludeSystemTypes || string.IsNullOrEmpty(typeNamespace)) return false;
+
+        return _systemNamespaces.Any(ns => typeNamespace.StartsWith(ns));
+    }
+
     /// <summary>
     /// Recursively unwraps Nullables and Arrays to find Generics or Class Identifiers.
     /// Fills the GenericType and TypeParams fields on the Member object.
+    /// Now handles deeply nested generics like Dictionary<string, List<Foo>>.
     /// </summary>
     private void ExtractTypeDependencies(TypeSyntax typeSyntax, Member member)
     {
@@ -120,7 +330,7 @@ public class SourceGraphBuilder : IGraphBuilder
             return;
         }
 
-        // Case: "List<TimingDose>" -> Handle Generic
+        // Case: "List<TimingDose>" or "Dictionary<string, List<Inner>>" -> Handle Generic
         if (typeSyntax is GenericNameSyntax generic)
         {
             if (member is Property p) p.GenericType = generic.Identifier.Text;
@@ -128,24 +338,77 @@ public class SourceGraphBuilder : IGraphBuilder
 
             foreach (var arg in generic.TypeArgumentList.Arguments)
             {
-                // Add "TimingDose" to the dependency list
-                var typeName = arg.ToString();
-                if (member is Property pp) pp.TypeParams.Add(typeName);
-                if (member is Method mm) mm.TypeParams.Add(typeName);
-                
-                // Recursion needed if you have complex nested types like Dictionary<string, List<Inner>>
-                // But for now, adding the string name is enough for the Graph builder to link it.
+                // Recursively extract dependencies from nested generics
+                ExtractTypeFromArgument(arg, member);
             }
             return;
         }
 
         // Case: "Medication" -> Simple Identifier
-        // Explicitly adding this helps if the top level was nullable e.g. "Medication?"
         if (typeSyntax is IdentifierNameSyntax identifier)
         {
-             var typeName = identifier.Identifier.Text;
-             if (member is Property pp) pp.TypeParams.Add(typeName);
-             if (member is Method mm) mm.TypeParams.Add(typeName);
+            AddTypeDependency(identifier.Identifier.Text, member);
+        }
+
+        // Case: Qualified names like "System.String"
+        if (typeSyntax is QualifiedNameSyntax qualifiedName)
+        {
+            var typeName = qualifiedName.Right.Identifier.Text;
+            AddTypeDependency(typeName, member);
+        }
+    }
+
+    private void ExtractTypeFromArgument(TypeSyntax arg, Member member)
+    {
+        // Handle nested generics: Dictionary<string, List<Inner>>
+        if (arg is GenericNameSyntax nestedGeneric)
+        {
+            // Recursively process the nested generic
+            foreach (var nestedArg in nestedGeneric.TypeArgumentList.Arguments)
+            {
+                ExtractTypeFromArgument(nestedArg, member);
+            }
+        }
+        else if (arg is IdentifierNameSyntax identifier)
+        {
+            AddTypeDependency(identifier.Identifier.Text, member);
+        }
+        else if (arg is QualifiedNameSyntax qualifiedName)
+        {
+            AddTypeDependency(qualifiedName.Right.Identifier.Text, member);
+        }
+        else if (arg is NullableTypeSyntax nullable)
+        {
+            ExtractTypeFromArgument(nullable.ElementType, member);
+        }
+        else if (arg is ArrayTypeSyntax array)
+        {
+            ExtractTypeFromArgument(array.ElementType, member);
+        }
+        else
+        {
+            // Fallback: use string representation
+            var typeName = arg.ToString();
+            AddTypeDependency(typeName, member);
+        }
+    }
+
+    private void AddTypeDependency(string typeName, Member member)
+    {
+        // Skip primitive types
+        var primitives = new[] { "int", "string", "bool", "double", "float", "decimal", "long", "short", "byte", "char", "object", "void" };
+        if (primitives.Contains(typeName.ToLower())) return;
+
+        // Skip if it's a system type and we're excluding them
+        if (ExcludeSystemTypes && _systemNamespaces.Any(ns => typeName.StartsWith(ns))) return;
+
+        if (member is Property p && !p.TypeParams.Contains(typeName))
+        {
+            p.TypeParams.Add(typeName);
+        }
+        if (member is Method m && !m.TypeParams.Contains(typeName))
+        {
+            m.TypeParams.Add(typeName);
         }
     }
 
@@ -168,8 +431,8 @@ public class SourceGraphBuilder : IGraphBuilder
 
     private bool IsVisible(SyntaxTokenList modifiers)
     {
-        // Default to internal/private if no modifier, but we usually want Public properties for diagrams
-        return modifiers.Any(m => m.IsKind(SyntaxKind.PublicKeyword));
+        var visibility = GetVisibility(modifiers);
+        return visibility >= MinimumVisibility;
     }
 
     private Visibility GetVisibility(SyntaxTokenList modifiers)

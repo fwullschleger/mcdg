@@ -10,16 +10,17 @@
     <ToolCommandName>mcdg</ToolCommandName>
     <PackageOutputPath>../../nupkg</PackageOutputPath>
     
-    <Version>1.0.3</Version>
+    <Version>1.1.0</Version>
     <PackageId>mcdg</PackageId>
     <PackageLicenseExpression>MIT</PackageLicenseExpression>
-    <PackageTags>mermaid;diagram;classdiagram;generator;C#;markdown</PackageTags>
+    <PackageTags>mermaid;diagram;classdiagram;generator;C#;markdown;roslyn</PackageTags>
     <Copyright>Copyright (c) 2025 fwullschleger</Copyright>
     <Authors>fwullschleger</Authors>
     <Owners>fwullschleger</Owners>
     <RepositoryUrl>https://github.com/fwullschleger/mcdg</RepositoryUrl>
     <PackageReadmeFile>README.md</PackageReadmeFile>
-    <PackageDescription>Dotnet tool for generating a mermaid class-diagram from C# class files</PackageDescription>
+    <PackageDescription>Dotnet tool for generating mermaid class diagrams from C# source code with advanced filtering and semantic analysis</PackageDescription>
+    <PackageReleaseNotes>v1.1.0: Enhanced type detection, partial class support, visibility filtering, system type exclusion, improved error handling, nested generics support</PackageReleaseNotes>
     
   </PropertyGroup>
 
