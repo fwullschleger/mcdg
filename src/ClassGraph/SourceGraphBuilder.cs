@@ -23,6 +23,12 @@ public class SourceGraphBuilder : IGraphBuilder
 
     public Graph Build(IEnumerable<string> files, IEnumerable<string> nsList, IEnumerable<string> typenameList, bool inheritanceOnly)
     {
+        // Reset state for multiple Build() calls
+        _partialTypes = new Dictionary<string, List<TypeDeclarationSyntax>>();
+        _errors = new List<string>();
+        _filesProcessed = 0;
+        _classesFound = 0;
+
         var graph = new Graph();
         var fileList = files.ToList();
 
@@ -192,7 +198,7 @@ public class SourceGraphBuilder : IGraphBuilder
         foreach (var partial in partials)
         {
             // Handle Inheritance and Interfaces
-            if (partial.BaseList != null && @class.BaseType == null)
+            if (partial.BaseList != null)
             {
                 ProcessBaseList(partial, @class);
             }
@@ -287,9 +293,9 @@ public class SourceGraphBuilder : IGraphBuilder
         return typeDecl switch
         {
             InterfaceDeclarationSyntax => TypeKind.Interface,
-            StructDeclarationSyntax when typeDecl.Modifiers.Any(m => m.IsKind(SyntaxKind.RecordKeyword)) => TypeKind.RecordStruct,
-            StructDeclarationSyntax => TypeKind.Struct,
+            RecordDeclarationSyntax when typeDecl.Kind() == SyntaxKind.RecordStructDeclaration => TypeKind.RecordStruct,
             RecordDeclarationSyntax => TypeKind.Record,
+            StructDeclarationSyntax => TypeKind.Struct,
             _ => TypeKind.Class
         };
     }
@@ -312,7 +318,11 @@ public class SourceGraphBuilder : IGraphBuilder
                     {
                         if (!ShouldExcludeType(namedType.ContainingNamespace?.ToDisplayString()))
                         {
-                            c.ImplementedInterface.Add(typeName);
+                            // Deduplicate interfaces
+                            if (!c.ImplementedInterface.Contains(typeName))
+                            {
+                                c.ImplementedInterface.Add(typeName);
+                            }
                         }
                     }
                     else if (c.BaseType == null)
@@ -333,7 +343,11 @@ public class SourceGraphBuilder : IGraphBuilder
             }
             else
             {
-                c.ImplementedInterface.Add(typeName);
+                // Deduplicate interfaces
+                if (!c.ImplementedInterface.Contains(typeName))
+                {
+                    c.ImplementedInterface.Add(typeName);
+                }
             }
         }
     }

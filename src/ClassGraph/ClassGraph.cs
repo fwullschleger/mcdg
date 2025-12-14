@@ -172,9 +172,9 @@ public class Member
 public enum Visibility
 {
     Private = 0,
+    Internal,
     Protected,
-    Public,
-    Internal
+    Public
 }
 public enum RelationType
 {
