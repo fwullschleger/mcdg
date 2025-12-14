@@ -52,14 +52,22 @@ classDiagram
       lines.Add($"  {typeAnnotation}");
     }
 
-    // Add properties
-    foreach (var property in @class.Properties) {
-      lines.Add(GenerateClassProperty(@class.Name, property, @class.Kind));
+    // For enums, add enum values instead of properties/methods
+    if (@class.Kind == TypeKind.Enum) {
+      foreach (var enumValue in @class.EnumValues) {
+        lines.Add($"  {enumValue}");
+      }
     }
+    else {
+      // Add properties
+      foreach (var property in @class.Properties) {
+        lines.Add(GenerateClassProperty(@class.Name, property, @class.Kind));
+      }
 
-    // Add methods
-    foreach (var method in @class.Methods) {
-      lines.Add(GenerateClassMethod(@class.Name, method, @class.Kind));
+      // Add methods
+      foreach (var method in @class.Methods) {
+        lines.Add(GenerateClassMethod(@class.Name, method, @class.Kind));
+      }
     }
 
     // Join all lines without trailing newline
@@ -74,6 +82,7 @@ classDiagram
       TypeKind.Record => "<<record>>",
       TypeKind.Struct => "<<struct>>",
       TypeKind.RecordStruct => "<<record struct>>",
+      TypeKind.Enum => "<<enumeration>>",
       _ => string.Empty
     };
   }

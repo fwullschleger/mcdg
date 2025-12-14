@@ -107,6 +107,7 @@ public class Class
     public TypeKind Kind { get; set; } = TypeKind.Class;
     public IList<Property> Properties { get; set; } = new List<Property>();
     public IList<Method> Methods { get; set; } = new List<Method>();
+    public IList<string> EnumValues { get; set; } = new List<string>();
 
     public Class(string name)
     {
@@ -188,5 +189,6 @@ public enum TypeKind
     Interface,
     Record,
     Struct,
-    RecordStruct
+    RecordStruct,
+    Enum
 }

@@ -67,6 +67,9 @@ public class SourceGraphBuilder : IGraphBuilder
                 // Find all classes, interfaces, records, structs
                 var typeDeclarations = root.DescendantNodes().OfType<TypeDeclarationSyntax>();
 
+                // Find all enums
+                var enumDeclarations = root.DescendantNodes().OfType<EnumDeclarationSyntax>();
+
                 foreach (var typeDecl in typeDeclarations)
                 {
                     // Filter by type name
@@ -94,6 +97,23 @@ public class SourceGraphBuilder : IGraphBuilder
                         graph.AddClass(@class);
                         _classesFound++;
                     }
+                }
+
+                // Process enums
+                foreach (var enumDecl in enumDeclarations)
+                {
+                    // Filter by type name
+                    if (typenameList.Any() && !typenameList.Contains(enumDecl.Identifier.Text))
+                        continue;
+
+                    // Filter by Namespace
+                    var ns = GetNamespace(enumDecl);
+                    if (nsList.Any() && !nsList.Contains(ns))
+                        continue;
+
+                    var @class = BuildClassFromEnum(enumDecl);
+                    graph.AddClass(@class);
+                    _classesFound++;
                 }
             }
             catch (Exception ex)
@@ -199,6 +219,23 @@ public class SourceGraphBuilder : IGraphBuilder
         }
 
         return @class;
+    }
+
+    private Class BuildClassFromEnum(EnumDeclarationSyntax enumDecl)
+    {
+        var c = new Class(enumDecl.Identifier.Text)
+        {
+            IsInterface = false,
+            Kind = TypeKind.Enum
+        };
+
+        // Extract enum member names
+        foreach (var member in enumDecl.Members)
+        {
+            c.EnumValues.Add(member.Identifier.Text);
+        }
+
+        return c;
     }
 
     private Class BuildClassFromSyntax(TypeDeclarationSyntax typeDecl)
