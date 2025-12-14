@@ -16,39 +16,54 @@ classDiagram
 }}";
 
   public string Generate(Graph graph) {
-    string allClass = string.Empty;
+    var allClass = new List<string>();
     foreach (var @class in graph.Classes) {
       var classString = GenerateClass(@class);
-      allClass += classString + "\r\n";
+      allClass.Add(classString);
     }
 
-    string allRelation = string.Empty;
+    var allRelation = new List<string>();
     foreach (var relation in graph.Relations) {
       var relationString = GenerateRelation(relation);
-      allRelation += relationString + "\r\n";
+      allRelation.Add(relationString);
     }
 
-    return string.Format(MDFrame, allClass, allRelation);
+    // Join classes with blank line between them
+    var classSection = string.Join("\r\n\r\n", allClass);
+
+    // Join relations without blank lines between them
+    var relationSection = string.Join("\r\n", allRelation);
+
+    // Add blank line between class section and relation section if both exist
+    var sections = classSection;
+    if (!string.IsNullOrEmpty(relationSection)) {
+      sections += "\r\n\r\n" + relationSection;
+    }
+
+    return string.Format(MDFrame, sections, string.Empty);
   }
 
   private string GenerateClass(Class @class) {
-    var content = string.Empty;
+    var lines = new List<string>();
 
     // Add type annotation (<<interface>>, <<record>>, etc.) as first line inside class block
     var typeAnnotation = GetTypeAnnotation(@class.Kind);
     if (!string.IsNullOrEmpty(typeAnnotation)) {
-      content += $"  {typeAnnotation}\r\n";
+      lines.Add($"  {typeAnnotation}");
     }
 
     // Add properties
     foreach (var property in @class.Properties) {
-      content += GenerateClassProperty(@class.Name, property, @class.Kind) + "\r\n";
+      lines.Add(GenerateClassProperty(@class.Name, property, @class.Kind));
     }
 
     // Add methods
     foreach (var method in @class.Methods) {
-      content += GenerateClassMethod(@class.Name, method, @class.Kind) + "\r\n";
+      lines.Add(GenerateClassMethod(@class.Name, method, @class.Kind));
     }
+
+    // Join all lines without trailing newline
+    var content = string.Join("\r\n", lines);
 
     return string.Format(ClassFrame, @class.Name, content, string.Empty);
   }
