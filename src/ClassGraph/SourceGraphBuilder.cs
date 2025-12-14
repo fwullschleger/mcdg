@@ -253,7 +253,6 @@ public class SourceGraphBuilder : IGraphBuilder
             StructDeclarationSyntax when typeDecl.Modifiers.Any(m => m.IsKind(SyntaxKind.RecordKeyword)) => TypeKind.RecordStruct,
             StructDeclarationSyntax => TypeKind.Struct,
             RecordDeclarationSyntax => TypeKind.Record,
-            ClassDeclarationSyntax when typeDecl.Modifiers.Any(m => m.IsKind(SyntaxKind.RecordKeyword)) => TypeKind.Record,
             _ => TypeKind.Class
         };
     }
@@ -286,7 +285,7 @@ public class SourceGraphBuilder : IGraphBuilder
                             c.BaseType = typeName;
                         }
                     }
-                    return;
+                    continue;
                 }
             }
 
