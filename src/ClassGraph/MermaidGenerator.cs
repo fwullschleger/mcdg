@@ -11,8 +11,9 @@ classDiagram
 ";
 
   private static string ClassFrame =
-@"class {0} 
-{1}{2}";
+@"class {0} {{
+{1}{2}
+}}";
 
   public string Generate(Graph graph) {
     string allClass = string.Empty;
@@ -31,23 +32,25 @@ classDiagram
   }
 
   private string GenerateClass(Class @class) {
-    var allProperties = string.Empty;
-    foreach (var property in @class.Properties) {
-      allProperties += GenerateClassProperty(@class.Name, property) + "\r\n";
-    }
+    var content = string.Empty;
 
-    var allMethods = string.Empty;
-    foreach (var method in @class.Methods) {
-      allMethods += GenerateClassMethod(@class.Name, method) + "\r\n";
-    }
-
-    // Add type annotation for non-class types
+    // Add type annotation (<<interface>>, <<record>>, etc.) as first line inside class block
     var typeAnnotation = GetTypeAnnotation(@class.Kind);
     if (!string.IsNullOrEmpty(typeAnnotation)) {
-      allProperties = $"{@class.Name} : {typeAnnotation}\r\n" + allProperties;
+      content += $"  {typeAnnotation}\r\n";
     }
 
-    return string.Format(ClassFrame, @class.Name, allProperties, allMethods);
+    // Add properties
+    foreach (var property in @class.Properties) {
+      content += GenerateClassProperty(@class.Name, property, @class.Kind) + "\r\n";
+    }
+
+    // Add methods
+    foreach (var method in @class.Methods) {
+      content += GenerateClassMethod(@class.Name, method, @class.Kind) + "\r\n";
+    }
+
+    return string.Format(ClassFrame, @class.Name, content, string.Empty);
   }
 
   private string GetTypeAnnotation(TypeKind kind) {
@@ -60,18 +63,22 @@ classDiagram
     };
   }
 
-  private string GenerateClassProperty(string className, Property property) {
+  private string GenerateClassProperty(string className, Property property, TypeKind typeKind) {
     // Pass the raw Type string (e.g. "List<TimingDose>?")
     var typeString = GetTypeString(property.Type);
     var visibilityNotion = GetVisibilityNotion(property.MemberVisibility);
-    return $"{className} : {visibilityNotion}{typeString} {property.Name}";
+
+    // For cleaner Mermaid output, don't prefix with className - just indent
+    return $"  {visibilityNotion}{typeString} {property.Name}";
   }
 
-  private string GenerateClassMethod(string className, Method method) {
+  private string GenerateClassMethod(string className, Method method, TypeKind typeKind) {
     // Pass the raw Type string
     var typeString = GetTypeString(method.Type);
     var visibilityNotion = GetVisibilityNotion(method.MemberVisibility);
-    return $"{className} : {visibilityNotion}{method.Name}() {typeString}";
+
+    // For cleaner Mermaid output, don't prefix with className - just indent
+    return $"  {visibilityNotion}{method.Name}() {typeString}";
   }
 
   /// <summary>
@@ -86,6 +93,12 @@ classDiagram
   }
 
   private string GenerateRelation(ClassRelation relation) {
+    // For implementation, use the correct Mermaid syntax with "implements" label
+    // Interface (To) should be on the left, implementing class (From) on the right
+    if (relation.Type == RelationType.Implementation) {
+      return $"{relation.To.Name} <|.. {relation.From.Name} : implements";
+    }
+
     var relationNotion = GetRelationNotion(relation.Type);
     return $"{relation.To.Name} {relationNotion} {relation.From.Name}";
   }
@@ -95,7 +108,7 @@ classDiagram
       case RelationType.Inheritance:
         return "<|--";
       case RelationType.Implementation:
-        return "<|..";
+        return "..|>"; // Not used directly anymore, handled in GenerateRelation
       case RelationType.Dependency:
         return "<--"; // Defines the arrow direction for dependency
       default:
