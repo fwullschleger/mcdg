@@ -104,8 +104,10 @@ public class Class
     public string? BaseType { get; set; }
     public IList<string> ImplementedInterface { get; set; } = new List<string>();
     public bool IsInterface { get; set; } = false;
+    public TypeKind Kind { get; set; } = TypeKind.Class;
     public IList<Property> Properties { get; set; } = new List<Property>();
     public IList<Method> Methods { get; set; } = new List<Method>();
+    public IList<string> EnumValues { get; set; } = new List<string>();
 
     public Class(string name)
     {
@@ -170,13 +172,23 @@ public class Member
 public enum Visibility
 {
     Private = 0,
+    Internal,
     Protected,
-    Public,
-    Internal
+    Public
 }
 public enum RelationType
 {
     Implementation = 0,
     Inheritance,
     Dependency
+}
+
+public enum TypeKind
+{
+    Class = 0,
+    Interface,
+    Record,
+    Struct,
+    RecordStruct,
+    Enum
 }
