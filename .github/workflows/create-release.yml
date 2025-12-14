@@ -1,0 +1,269 @@
+name: Create Release
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 'SemVer version (e.g., v1.0.0, v1.0.0-beta1)'
+        required: true
+        type: string
+      prerelease:
+        description: 'Is this a pre-release?'
+        required: false
+        default: false
+        type: boolean
+      draft:
+        description: 'Create release as a draft?'
+        required: false
+        default: false
+        type: boolean
+      release_notes:
+        description: 'Optional release notes text'
+        required: false
+        type: string
+      allow_older_version:
+        description: 'Bypass version order/history? (Use for Hotfixes)'
+        required: false
+        default: false
+        type: boolean
+
+jobs:
+  validate_build_and_release:
+    runs-on: ubuntu-latest
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0 # Crucial: Must fetch all history for tag comparison
+      
+      # ---------------------------------------------------------
+      # STEP 1: SAFETY CHECKS (The "Gatekeeper")
+      # ---------------------------------------------------------
+      - name: 🛡️ Run Safety Checks
+        shell: bash
+        run: |
+          NEW_VERSION="${{ github.event.inputs.version }}"
+          ALLOW_OLDER="${{ github.event.inputs.allow_older_version }}"
+          CURRENT_BRANCH="${{ github.ref_name }}"
+          PROTECTED_BRANCH="${{ github.event.repository.default_branch }}" 
+          
+          echo "════════════════════════════════════════════════════════"
+          echo "🔍 Starting Safety Checks for $NEW_VERSION"
+          echo "════════════════════════════════════════════════════════"
+          echo "ℹ️  Workflow Inputs:"
+          echo "   • Version: $NEW_VERSION"
+          echo "   • Pre-release: ${{ github.event.inputs.prerelease }}"
+          echo "   • Draft: ${{ github.event.inputs.draft }}"
+          echo "   • Allow Older Version: $ALLOW_OLDER"
+          echo ""
+          echo "ℹ️  Environment:"
+          echo "   • Current Branch: $CURRENT_BRANCH"
+          echo "   • Protected Branch: $PROTECTED_BRANCH"
+          echo "   • Commit SHA: ${{ github.sha }}"
+          echo "════════════════════════════════════════════════════════"
+          echo ""
+
+          # 0. Shallow Repository Check
+          echo "🔍 [Check 0/6] Verifying repository depth..."
+          SHALLOW_STATUS=$(git rev-parse --is-shallow-repository)
+          echo "   Repository shallow status: $SHALLOW_STATUS"
+          
+          if [[ "$SHALLOW_STATUS" == "true" ]]; then
+            echo "::error::❌ Repository is shallow. You must use fetch-depth: 0 in the checkout step."
+            exit 1
+          fi
+          echo "✅ Repository has full history"
+          echo ""
+          
+          # 1. Branch Check
+          echo "🔍 [Check 1/6] Validating release branch..."
+          echo "   Expected: $PROTECTED_BRANCH"
+          echo "   Current:  $CURRENT_BRANCH"
+          
+          if [[ "$CURRENT_BRANCH" != "$PROTECTED_BRANCH" ]]; then
+            echo "::error::❌ Invalid Branch. You can only release from '$PROTECTED_BRANCH'."
+            exit 1
+          fi
+          echo "✅ Branch check passed"
+          echo ""
+          
+          # 2. Format Check
+          echo "🔍 [Check 2/6] Validating version format..."
+          echo "   Testing: $NEW_VERSION"
+          
+          if [[ ! "$NEW_VERSION" =~ ^v[0-9]+\.[0-9]+\.[0-9]+(-[a-zA-Z0-9.-]+)?$ ]]; then
+            echo "::error::❌ Invalid Format. Example: v1.0.0"
+            exit 1
+          fi
+          echo "✅ Version format is valid"
+          echo ""
+          
+          # 3. Duplicate Check
+          echo "🔍 [Check 3/6] Checking for duplicate tags..."
+          
+          echo "   Checking local tags..."
+          if git rev-parse "$NEW_VERSION" >/dev/null 2>&1; then
+            echo "::error::❌ Tag '$NEW_VERSION' already exists (locally)."
+            exit 1
+          fi
+          echo "   ✓ Tag does not exist locally"
+          
+          echo "   Checking remote tags..."
+          if git ls-remote --exit-code --tags origin "$NEW_VERSION" >/dev/null 2>&1; then
+            echo "::error::❌ Tag '$NEW_VERSION' already exists on remote."
+            exit 1
+          fi
+          echo "   ✓ Tag does not exist on remote"
+          echo "✅ No duplicate tags found"
+          echo ""
+          
+          # 4. Linear History & Version Order Check
+          echo "🔍 [Check 4/6] Validating version history..."
+          
+          # Find all tags for debugging
+          ALL_TAGS=$(git tag --sort=-v:refname)
+          TAG_COUNT=$(echo "$ALL_TAGS" | grep -c . || echo "0")
+          echo "   Total tags in repository: $TAG_COUNT"
+          
+          if [[ $TAG_COUNT -gt 0 ]]; then
+            echo "   Recent tags:"
+            echo "$ALL_TAGS" | head -n 5 | sed 's/^/     - /'
+          fi
+          
+          LATEST_TAG=$(git tag --sort=-v:refname | head -n 1)
+          
+          if [[ -z "$LATEST_TAG" ]]; then
+             echo "ℹ️  No previous tags found. Assuming this is the first release."
+          else
+             echo "   Latest existing tag: $LATEST_TAG"
+             echo "   New version: $NEW_VERSION"
+          
+             if [[ "$ALLOW_OLDER" == "true" ]]; then
+                 echo "::warning::⚠️  'Allow Older Version' is ON. Bypassing history and order checks."
+             else
+                 # A. Version Number Order Check
+                 echo ""
+                 echo "   Testing version order..."
+                 HIGHEST=$(printf '%s\n%s' "$LATEST_TAG" "$NEW_VERSION" | sort -V | tail -n1)
+                 echo "   Comparison result: $HIGHEST is the highest"
+          
+                 if [[ "$HIGHEST" == "$LATEST_TAG" ]]; then
+                      echo "::error::❌ Invalid Version Order. $NEW_VERSION is not greater than existing $LATEST_TAG."
+                      echo "👉 Tip: If this is a Hotfix (e.g., patching v1.0 while v2.0 exists), check 'Allow Older Version'."
+                      exit 1
+                 fi
+                 echo "   ✓ $NEW_VERSION > $LATEST_TAG"
+          
+                 # B. Linear History (Descendant) Check
+                 echo ""
+                 echo "   Testing commit ancestry..."
+                 LATEST_TAG_COMMIT=$(git rev-parse "$LATEST_TAG")
+                 CURRENT_COMMIT=$(git rev-parse HEAD)
+                 echo "   Latest tag ($LATEST_TAG) points to: ${LATEST_TAG_COMMIT:0:8}"
+                 echo "   Current HEAD points to: ${CURRENT_COMMIT:0:8}"
+          
+                 if ! git merge-base --is-ancestor "$LATEST_TAG" HEAD; then
+                      echo "::error::❌ Broken History. The current commit is not a descendant of $LATEST_TAG."
+                      echo "👉 This ensures you include previous changes. If you are patching an old branch, check 'Allow Older Version'."
+                      exit 1
+                 fi
+                 echo "   ✓ Current commit is a descendant of $LATEST_TAG"
+                 echo "✅ History is linear and version is increasing"
+             fi
+          fi
+          echo ""
+          
+          # 5. .NET .csproj Version Consistency
+          echo "🔍 [Check 5/6] Validating .NET project version..."
+          
+          CSPROJ_FILE=$(find . -name "*.csproj" | head -n 1)
+          
+          if [[ -z "$CSPROJ_FILE" ]]; then
+             echo "ℹ️  No .csproj file found. Skipping .NET version check."
+          else
+             echo "   Found: $CSPROJ_FILE"
+          
+             RAW_VERSION=$(grep -oPm1 "(?<=<Version>)[^<]+" "$CSPROJ_FILE" 2>/dev/null || grep -oPm1 "(?<=<VersionPrefix>)[^<]+" "$CSPROJ_FILE" 2>/dev/null)
+          
+             if [[ -z "$RAW_VERSION" ]]; then
+                echo "::warning::⚠️  No <Version> or <VersionPrefix> tag found in $CSPROJ_FILE. Skipping version check."
+             else
+                PROJECT_VERSION=$(echo "$RAW_VERSION" | xargs)
+                CLEAN_INPUT=${NEW_VERSION#v}
+          
+                echo "   .csproj version: $PROJECT_VERSION"
+                echo "   Input version (stripped): $CLEAN_INPUT"
+          
+                if [[ "$CLEAN_INPUT" != "$PROJECT_VERSION" ]]; then
+                    echo "::error::❌ Mismatch! Input is $NEW_VERSION, but .csproj is $PROJECT_VERSION."
+                    exit 1
+                fi
+                echo "✅ Version in .csproj matches input"
+             fi
+          fi
+          echo ""
+          
+          echo "════════════════════════════════════════════════════════"
+          echo "✅ All safety checks passed!"
+          echo "════════════════════════════════════════════════════════"
+
+      # ---------------------------------------------------------
+      # STEP 2: BUILD AND TEST (The "Proving Ground")
+      # ---------------------------------------------------------
+      - name: Setup .NET
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '8.0.x' # ADJUST THIS to your .NET version (6.0, 7.0, 8.0)
+
+      - name: Restore Dependencies
+        run: |
+          echo "📦 Restoring .NET dependencies..."
+          dotnet restore
+
+      - name: Build (Release Mode)
+        # We pass /p:Version to ensure the binary internal version matches the Git Tag!
+        run: |
+          VERSION_NO_V="${{ github.event.inputs.version }}"
+          VERSION_NO_V="${VERSION_NO_V#v}"
+          
+          echo "🔨 Building project in Release mode..."
+          echo "   Assembly Version: $VERSION_NO_V"
+          
+          dotnet build --configuration Release --no-restore /p:Version=$VERSION_NO_V
+          
+          echo "✅ Build completed successfully"
+          
+          #      - name: Run Unit Tests
+          #        run: |
+          #          echo "🧪 Running unit tests..."
+          #          dotnet test --configuration Release --no-build --verbosity normal
+          #          echo "✅ All tests passed"
+      
+      # ---------------------------------------------------------
+      # STEP 3: CREATE RELEASE (Using softprops)
+      # ---------------------------------------------------------
+      - name: Create GitHub Release
+        run: |
+          echo "════════════════════════════════════════════════════════"
+          echo "🚀 Creating GitHub Release"
+          echo "════════════════════════════════════════════════════════"
+          echo "   Tag: ${{ github.event.inputs.version }}"
+          echo "   Pre-release: ${{ github.event.inputs.prerelease }}"
+          echo "   Draft: ${{ github.event.inputs.draft }}"
+          echo "   Target: ${{ github.sha }}"
+          echo "════════════════════════════════════════════════════════"
+
+      - uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ github.event.inputs.version }}
+          name: ${{ github.event.inputs.version }}
+          body: |
+            Release: ${{ github.event.inputs.version }}
+            ${{ github.event.inputs.release_notes }}
+          draft: ${{ github.event.inputs.draft }}
+          prerelease: ${{ github.event.inputs.prerelease }}
+          target_commitish: ${{ github.sha }}
+          # If you want to upload the build artifacts (dll/exe), uncomment below:
+          # files: |
+          #   bin/Release/net8.0/*.dll
